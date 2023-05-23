@@ -1,0 +1,146 @@
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include  <Adafruit_SSD1306.h>
+#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeMonoOblique9pt7b.h>
+#include  <DHT.h>
+#include <EspMQTTClient.h>
+
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define  SCREEN_HEIGHT 64 // OLED display height, in pixels
+
+#define OLED_RESET     -1  // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS 0x3D
+Adafruit_SSD1306 display(SCREEN_WIDTH,  SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+#define sensor    A0 
+#define DHTPIN  2          // Digital pin 2
+#define DHTTYPE DHT11     // DHT 11
+
+int gasLevel  = 0;         //int variable for gas level
+String quality =""; 
+DHT dht(DHTPIN,  DHTTYPE);
+
+EspMQTTClient client (
+ "Wokwi-GUEST",         // SSID WiFi
+  "",                    // senha WiFi
+  "test.mosquitto.org",  // MQTT Broker
+  "mqtt-wokwi",          // Client
+  1883                   // MQTT port
+);
+
+
+void sendSensor()
+{
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+
+  if (isnan(h) || isnan(t)) {
+  Serial.println("Failed  to read from DHT sensor!");
+    return;
+  }
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setFont();
+  display.setCursor(0, 43);
+  display.println("Temperatura  :");
+  display.setCursor(80, 43);
+  display.println(t);
+  display.setCursor(114, 43);
+  display.println("C");
+  display.setCursor(0,  56);
+  display.println("Humidade    :");
+  display.setCursor(80, 56);
+  display.println(h);
+  display.setCursor(114, 56);
+  display.println("%");
+}
+
+void air_sensor()
+{
+  gasLevel = analogRead(sensor);
+
+  if(gasLevel<181){
+    quality = "  Boa!";
+  }
+  else if (gasLevel >181 && gasLevel<225){
+    quality =  "  Ruim!";
+  }
+  else if (gasLevel >225 && gasLevel<300){
+    quality  = "Muito ruim!";
+  }
+    else if (gasLevel >300 && gasLevel<350){
+    quality  = "Terrível!";
+  }
+    else{
+    quality = " Toxica";   
+}
+  
+  display.setTextColor(WHITE);
+  display.setTextSize(1);  
+  display.setCursor(1,5);
+  display.setFont();
+  display.println("Qualidade do ar:");
+  display.setTextSize(1);
+  display.setCursor(20,23);
+  display.setFont(&FreeMonoOblique9pt7b);
+  display.println(quality); 
+   
+}
+
+void setup() {
+  Serial.begin(9600);
+  client.enableDebuggingMessages(); // Enable debugging messages sent to serial output
+  client.enableHTTPWebUpdater(); // Enable the web updater. User and password default to values of MQTTUsername and MQTTPassword. These can be overridded with enableHTTPWebUpdater("user", "password").
+  client.enableOTA(); // Enable OTA (Over The Air) updates. Password defaults to MQTTPassword. Port is the default OTA port. Can be overridden with enableOTA("password", port).
+  client.enableLastWillMessage("TestClient/lastwill", "Vou ficar offline");
+
+  pinMode(sensor,INPUT);
+  dht.begin();
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3c)) { // Address  0x3D for 128x64
+    Serial.println(F("SSD1306 allocation failed"));
+}
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  
+  display.setTextSize(2);
+  display.setCursor(50, 0);
+  display.println("Ar");
+  display.setTextSize(1);
+  display.setCursor(23, 20);
+  display.println("Monitor de qualidade");
+  display.display();
+  delay(1200);
+  display.clearDisplay();
+  
+  display.setTextSize(2);
+  display.setCursor(20, 20);
+  display.println("Isa Mori");
+  display.display();
+  delay(1000);
+  display.clearDisplay();    
+}
+
+void lerEnviarDados(){
+  Serial.println("Temperatura: " + String(dht.readTemperature(), 2) + " C");
+  Serial.println("Umidade ar:  " + String(dht.readHumidity(), 1) + "%");
+  Serial.println("Qualidade do ar: " + String(quality));
+  Serial.println("Nível gas: " + String(gasLevel));
+}
+void onConnectionEstablished()
+{
+  // Subscribe no "topicowokwi/msgRecebida/#" e mostra a mensagem recebida na Serial
+    client.subscribe("topicowokwi/msgRecebida/#", [](const String & topic, const String & payload) {
+    Serial.println("Mensagem recebida no topic: " + topic + ", payload: " + payload);
+  });
+  lerEnviarDados();
+}
+
+void loop() {
+//display.clearDisplay();
+//air_sensor();
+//sendSensor();
+//display.display();
+client.loop();
+}

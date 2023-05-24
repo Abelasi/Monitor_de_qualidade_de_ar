@@ -1,83 +1,96 @@
-//Código criado no Arduino IDE
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeMonoOblique9pt7b.h>
-#include <DHT.h>
+#include  <DHT.h>
+
+
+#include "DHT.h"
 #include <ESP8266WiFi.h>
-#include <PubSubClient.h>
-#include <string>
-#define SCREEN_WIDTH 128 // OLED display em pixels
-#define  SCREEN_HEIGHT 64 // OLED display em pixels
+#include "MQ135.h"
+#include <Ticker.h>
+#include <AsyncMqttClient.h>
 
-#define OLED_RESET     -1
-#define SCREEN_ADDRESS 0x3D //OLED 128x64
-Adafruit_SSD1306 display(SCREEN_WIDTH,  SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define WIFI_SSID "APTO22--2.0"
+#define WIFI_PASSWORD "sucodebatata49"
 
-#define sensor    A0 
-#define DHTPIN  2          // Digital pin 2
-#define DHTTYPE DHT11     // DHT 11
+//conexao MQTT
+#define MQTT_HOST "test.mosquitto.org"
+#define MQTT_PORT 1883
+#define MQTT_PUB_TEMP "esp/dht/temperature"
+#define MQTT_PUB_HUM "esp/dht/humidity"
+#define MQTT_PUB_AR "esp/mq135/qualidadeAr"
 
-int gasLevel  = 0;         //int variavel nível gas
-String quality =""; 
-DHT dht(DHTPIN,  DHTTYPE);
+#define ANALOGPIN   A0 //sensor de gas
+#define DHTPIN 2       //pin sensor DH11
+#define DHTTYPE DHT11       //tipo do sensor
 
-//Conexão WIFI
-const char *ssid = "APTO22--2.0";
-const char *password = "sucodebatata49";
 
-//MQTT Broker
-const char *mqtt_broker = "test.mosquitto.org";  
-const char *topic = "IoT/MonitorQualidadeAr";            
-const char *mqtt_username = "";                  
-const char *mqtt_password = "";                 
-const int mqtt_port = 1883;  
+//iniciar sensor
+DHT dht(DHTPIN, DHTTYPE);
+//declaracao variaveis
+float temp;
+float hum;
+String qualidadeAr;
+String quality;
+int gasLevel;
 
-//VAR
-bool mqttStatus = 0;
-String menssagemRecebida = "AUTO";                 
+AsyncMqttClient mqttClient;
+Ticker mqttReconnectTimer;
 
-//obj
-WiFiClient espClient;           
-PubSubClient client(espClient);
+WiFiEventHandler wifiConnectHandler;
+WiFiEventHandler wifiDisconnectHandler;
+Ticker wifiReconnectTimer;
 
-//Prototipos
-bool connectMQTT();                                             
-void callback(char *topic, byte *payload, unsigned int length);
+unsigned long previousMillis = 0;   // ultima publicação de temperatura 
+const long interval = 10000;        // Intervalo leitura sensor
 
-//sensor de temperatura e umidade do ar
-void sendSensor()
-{
-  float h = dht.readHumidity();
-  float t = dht.readTemperature();
-
-  if (isnan(h) || isnan(t)) {
-  Serial.println("Failed  to read from DHT sensor!");
-    return;
-  }
-  display.setTextColor(WHITE);
-  display.setTextSize(1);
-  display.setFont();
-  display.setCursor(0, 43);
-  display.println("Temperatura  :");
-  display.setCursor(80, 43);
-  display.println(t);
-  display.setCursor(114, 43);
-  display.println("C");
-  display.setCursor(0,  56);
-  display.println("Humidade    :");
-  display.setCursor(80, 56);
-  display.println(h);
-  display.setCursor(114, 56);
-  display.println("%");
+void connectToWifi() {
+  Serial.println("Connecting to Wi-Fi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
-//sensor de gas 
-void air_sensor()
-{
-  gasLevel = analogRead(sensor);
 
+void onWifiConnect(const WiFiEventStationModeGotIP& event) {
+  Serial.println("Connected to Wi-Fi.");
+  connectToMqtt();
+}
+
+void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
+  Serial.println("Disconnected from Wi-Fi.");
+  mqttReconnectTimer.detach(); 
+  wifiReconnectTimer.once(2, connectToWifi);
+}
+
+void connectToMqtt() {
+  Serial.println("Connecting to MQTT...");
+  mqttClient.connect();
+}
+
+void onMqttConnect(bool sessionPresent) {
+  Serial.println("Connected to MQTT.");
+  Serial.print("Session present: ");
+  Serial.println(sessionPresent);
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+  Serial.println("Disconnected from MQTT.");
+
+  if (WiFi.isConnected()) {
+    mqttReconnectTimer.once(2, connectToMqtt);
+  }
+}
+void onMqttPublish(uint16_t packetId) {
+  Serial.print("Publish acknowledged.");
+  Serial.print("  packetId: ");
+  Serial.println(packetId);
+}
+
+void air_sensor(){
+  
+  gasLevel = analogRead(ANALOGPIN);  
+  
   if(gasLevel<181){
     quality = "  Boa!";
   }
@@ -92,138 +105,54 @@ void air_sensor()
   }
     else{
     quality = " Toxica";   
-}
+  }
   
-  display.setTextColor(WHITE);
-  display.setTextSize(1);  
-  display.setCursor(1,5);
-  display.setFont();
-  display.println("Qualidade do ar:");
-  display.setTextSize(1);
-  display.setCursor(20,23);
-  display.setFont(&FreeMonoOblique9pt7b);
-  display.println(quality); 
-   
 }
 
 void setup() {
-  Serial.begin(9600);
-  
-  WiFi.begin(ssid, password); // Função para conectar na rede wifi
-
-  Serial.println();
-  Serial.print("Conectando");
-  while (WiFi.status() != WL_CONNECTED) { // Executa enquanto a conexão WiFi não é estabelecida
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("WiFi connected");
-
-  Serial.println(WiFi.localIP()); // Imprime o IP da rede que a conexão foi realizada
-
-  mqttStatus = connectMQTT(); // Executa a função connectMQTT e armazena o retorno na variável mqttStatus
- 
-  pinMode(sensor,INPUT);
+  Serial.begin(115200);
+    
   dht.begin();
-
-  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3c)) { 
-    Serial.println(F("SSD1306 allocation failed"));
-  }
-  display.clearDisplay();
-  display.setTextColor(WHITE);
   
-  display.setTextSize(2);
-  display.setCursor(50, 0);
-  display.println("Ar");
-  display.setTextSize(1);
-  display.setCursor(23, 20);
-  display.println("Monitor de qualidade");
-  display.display();
-  delay(1200);
-  display.clearDisplay();
+  wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
+
+  mqttClient.onConnect(onMqttConnect);
+  mqttClient.onDisconnect(onMqttDisconnect);
   
-  display.setTextSize(2);
-  display.setCursor(20, 20);
-  display.println("Isa Mori");
-  display.display();
-  delay(1000);
-  display.clearDisplay();    
-}
-
-bool connectMQTT() {
-  byte tentativa = 0;
-  client.setServer(mqtt_broker, mqtt_port);
-  client.setCallback(callback);
-
-  do {
-    String client_id = "ESP8266-";
-    client_id += String(WiFi.macAddress());
-
-    if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) { // Realiza a tentativa de conexão no broker MQTT
-      Serial.println("Exito na conexão:");
-      Serial.printf("Cliente %s conectado ao broker\n", client_id.c_str());
-    } else {
-      Serial.print("Falha ao conectar: ");
-      Serial.print(client.state());
-      Serial.println();
-      Serial.print("Tentativa: ");
-      Serial.println(tentativa);
-      delay(2000);
-    }
-    tentativa++;
-  } while (!client.connected() && tentativa < 5);
-
-  if (tentativa < 5) {
-    client.subscribe(topic);
-    return 1;
-  } else {
-    Serial.println("Não conectado");
-    return 0;
-  }
-}
-
-void callback(char *topic, byte *payload, unsigned int length) {
-
-  Serial.print("Menssagem recebida no topic: ");
-  Serial.println(topic);
-  Serial.print("Menssagem:");
-
-  char buff_p[length];
-  for (int i = 0; i < length; i++) {
-    buff_p[i] = (char)payload[i]; // Armazena os bytes recebidos na menssagem na variável buff_p realizando a conversão para char
-  }
-  buff_p[length] = '\0';
-
-  menssagemRecebida = String(buff_p); // Armazena buff_p na variável menssagemRecebida
-
-  Serial.println(menssagemRecebida); // Imprime a menssagem recebida no display serial  
-}
-
-void mostraValores(){
-  Serial.println("Temperatura: " + String(dht.readTemperature()) + "ºC");
-  Serial.println("Umidade: " + String(dht.readHumidity()) + "%");
-  Serial.println("Qualidade do ar: " + String(quality));
-
-  client.publish("topicoIoT/Temp", String(dht.readTemperature(), 2) + "°C"); 
-  client.publish("topicoIoT/Humidade", String(dht.readHumidity(), 1) + "%");
-  client.publish("topicoIoT/Gas", String(quality));
+  mqttClient.onPublish(onMqttPublish);
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+   
+  connectToWifi();
 }
 
 void loop() {
-static long long pooling = 0;
-  if (mqttStatus) {
+  unsigned long currentMillis = millis();
+  
+  if (currentMillis - previousMillis >= interval) {
+   //salva o tempo da ultima mensagem publicada
+    previousMillis = currentMillis;
+    //Nova leitura dht
+    hum = dht.readHumidity();
+    // Read temperature as Celsius (the default)
+    temp = dht.readTemperature();
+    // Read temperature as Fahrenheit (isFahrenheit = true)
+    //temp = dht.readTemperature(true);
+    qualidadeAr = analogRead(ANALOGPIN);  
+    
+    // faz publicação no topico temperature
+    uint16_t packetIdPub1 = mqttClient.publish(MQTT_PUB_TEMP, 1, true, String(temp).c_str());                            
+    Serial.printf("Publishing on topic %s at QoS 1, packetId: %i ", MQTT_PUB_TEMP, packetIdPub1);
+    Serial.printf("Message: %.2f \n", temp);      
 
-    client.loop();
+    //Faz publicação no topico humidity
+    uint16_t packetIdPub2 = mqttClient.publish(MQTT_PUB_HUM, 1, true, String(hum).c_str());                            
+    Serial.printf("Publishing on topic %s at QoS 1, packetId %i: ", MQTT_PUB_HUM, packetIdPub2);
+    Serial.printf("Message: %.2f \n", hum);
+    //Faz publicação no topico qualidadeAr
+    uint16_t packetIdPub3 = mqttClient.publish(MQTT_PUB_AR, 1, true, String(qualidadeAr).c_str());
+    Serial.printf("Publishing on topic %s at QoS 1, packetId %i: ", MQTT_PUB_AR, packetIdPub3);
+    Serial.printf("Message: %.2f", qualidadeAr);    
 
-    if (millis() > pooling + 1000) { // Executa entre intervalos de 1 segundo
-      pooling = millis();
-
-      mostraValores(); // Executa a função responsável pelo acionamento do relé
-    }
   }
-display.clearDisplay();
-air_sensor();
-sendSensor();
-display.display();
 }

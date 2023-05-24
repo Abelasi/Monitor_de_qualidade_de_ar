@@ -48,41 +48,41 @@ unsigned long previousMillis = 0;   // ultima publicação de temperatura
 const long interval = 10000;        // Intervalo leitura sensor
 
 void connectToWifi() {
-  Serial.println("Connecting to Wi-Fi...");
+  Serial.println("Conectando ao WiFi...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
 void onWifiConnect(const WiFiEventStationModeGotIP& event) {
-  Serial.println("Connected to Wi-Fi.");
+  Serial.println("Conectado ao WiFi.");
   connectToMqtt();
 }
 
 void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
-  Serial.println("Disconnected from Wi-Fi.");
+  Serial.println("Disconectada do Wi-Fi.");
   mqttReconnectTimer.detach(); 
   wifiReconnectTimer.once(2, connectToWifi);
 }
 
 void connectToMqtt() {
-  Serial.println("Connecting to MQTT...");
+  Serial.println("Conectando ao MQTT...");
   mqttClient.connect();
 }
 
 void onMqttConnect(bool sessionPresent) {
-  Serial.println("Connected to MQTT.");
-  Serial.print("Session present: ");
+  Serial.println("Conectado ao MQTT.");
+  Serial.print("Sessão : ");
   Serial.println(sessionPresent);
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  Serial.println("Disconnected from MQTT.");
+  Serial.println("Disconectado do MQTT.");
 
   if (WiFi.isConnected()) {
     mqttReconnectTimer.once(2, connectToMqtt);
   }
 }
 void onMqttPublish(uint16_t packetId) {
-  Serial.print("Publish acknowledged.");
+  Serial.print("Sucesso na publicação.");
   Serial.print("  packetId: ");
   Serial.println(packetId);
 }
@@ -134,21 +134,19 @@ void loop() {
     previousMillis = currentMillis;
     //Nova leitura dht
     hum = dht.readHumidity();
-    // Read temperature as Celsius (the default)
     temp = dht.readTemperature();
-    // Read temperature as Fahrenheit (isFahrenheit = true)
-    //temp = dht.readTemperature(true);
     qualidadeAr = analogRead(ANALOGPIN);  
     
     // faz publicação no topico temperature
     uint16_t packetIdPub1 = mqttClient.publish(MQTT_PUB_TEMP, 1, true, String(temp).c_str());                            
     Serial.printf("Publishing on topic %s at QoS 1, packetId: %i ", MQTT_PUB_TEMP, packetIdPub1);
     Serial.printf("Message: %.2f \n", temp);      
-
+    
     //Faz publicação no topico humidity
     uint16_t packetIdPub2 = mqttClient.publish(MQTT_PUB_HUM, 1, true, String(hum).c_str());                            
     Serial.printf("Publishing on topic %s at QoS 1, packetId %i: ", MQTT_PUB_HUM, packetIdPub2);
     Serial.printf("Message: %.2f \n", hum);
+    
     //Faz publicação no topico qualidadeAr
     uint16_t packetIdPub3 = mqttClient.publish(MQTT_PUB_AR, 1, true, String(qualidadeAr).c_str());
     Serial.printf("Publishing on topic %s at QoS 1, packetId %i: ", MQTT_PUB_AR, packetIdPub3);
